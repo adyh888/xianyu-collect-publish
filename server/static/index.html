@@ -212,6 +212,7 @@ async function publishItem() {
   if (!id) return;
   const markup = +document.getElementById('pubMarkup').value || 0;
   const address = document.getElementById('pubAddr').value.trim();
+  if (!address) { document.getElementById('pubMsg').textContent = '请先填写宝贝所在地（发布必需）'; return; }
   if (!confirm(`确认把「${document.getElementById('pTitle').textContent.slice(0, 30)}…」以加价 ${markup}% 克隆发布到你自己的闲鱼？\n将创建真实在售商品！`)) return;
   const btn = document.getElementById('pubBtn');
   btn.disabled = true;
@@ -222,7 +223,10 @@ async function publishItem() {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({item_id: id, markup, address}),
     });
-    const data = await r.json();
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch (_) { el.textContent = '服务错误: ' + text.slice(0, 120); btn.disabled = false; return; }
     if (data.success) {
       el.innerHTML = `✅ 发布成功 <a href="${data.item_url}" target="_blank">${data.item_id}</a>`;
     } else {

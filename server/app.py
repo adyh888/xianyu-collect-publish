@@ -143,9 +143,13 @@ def collect_shop(req: ShopReq):
 @app.post("/api/publish")
 def publish(req: PublishReq):
     """克隆发布：把已采详情发布到指定账号（创建真实商品，前端需二次确认）。"""
-    detail = _store.get_detail(req.item_id)
-    if not detail:
+    row = _store.get_detail(req.item_id)
+    if not row:
         raise HTTPException(404, "该商品还没有详情数据，先采集详情")
+    if not req.address.strip():
+        raise HTTPException(400, "请填写宝贝所在地（发布必需）")
+    from xianyu_collect.publish import PublishError, detail_from_store_row
+    detail = detail_from_store_row(row)
     if not _collect_lock.acquire(blocking=False):
         raise HTTPException(429, "已有采集/发布任务在跑")
     try:
@@ -158,11 +162,13 @@ def publish(req: PublishReq):
         from xianyu_collect.publish import clone_item
         result = clone_item(
             client, detail, account.unb or req.account,
-            markup_pct=req.markup, address_text=req.address, log=lambda *_: None,
+            markup_pct=req.markup, address_text=req.address.strip(), log=lambda *_: None,
         )
         account.cookies = client.cookies
         _accounts.save(account)
         return result
+    except PublishError as exc:
+        return {"success": False, "message": str(exc)}
     except RiskBlocked as exc:
         return {"success": False, "message": str(exc), "kind": "risk"}
     finally:

@@ -345,6 +345,20 @@ def build_payload(item_data: dict, account_id: str, image_items: list,
 
 # ---------------------------------------------------------------- 采集详情 → 发布表单
 
+def detail_from_store_row(row: dict) -> dict:
+    """把 SQLite item_details 行转换为 clone_form_from_detail 需要的详情结构。"""
+    return {
+        "item_id": row.get("item_id") or "",
+        "title": row.get("title") or "",
+        "price": row.get("price"),
+        "desc": row.get("descr") or "",
+        "images": row.get("image_urls") or [],
+        "skus": row.get("skus") or [],
+        "quantity": row.get("quantity"),
+        "raw_data": json.loads(row.get("raw_json") or "{}"),
+    }
+
+
 def clone_form_from_detail(detail: dict, markup_pct: float = 0.0) -> dict:
     """把采集到的商品详情映射为发布表单（含加价率），媒体上传前一步。"""
     raw = detail.get("raw_data") or {}

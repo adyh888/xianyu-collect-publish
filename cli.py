@@ -147,9 +147,9 @@ def main() -> int:
             print(f"❌ 商品 {args.item_id} 没有详情数据，先 chain/detail 采集")
             return 1
         from xianyu_collect.mtop import MtopClient as _C
-        from xianyu_collect.publish import clone_item
+        from xianyu_collect.publish import clone_item, detail_from_store_row
         client = _C(account.cookies, ua=account.ua)
-        result = clone_item(client, detail, account.unb or args.account,
+        result = clone_item(client, detail_from_store_row(detail), account.unb or args.account,
                             markup_pct=args.markup, address_text=args.address)
         account.cookies = client.cookies
         accounts.save(account)
