@@ -17,3 +17,5 @@ __pycache__/
 
 # 扫码登录二维码
 login_qr.png
+
+server/__pycache__/

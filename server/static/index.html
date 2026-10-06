@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>闲鱼采集台</title>
+<style>
+  :root { --yellow:#ffe600; --ink:#1a1a1a; --muted:#8a8a8a; --line:#ececec; --bg:#f7f7f5; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--yellow); padding:18px 28px; display:flex; align-items:center; gap:14px; }
+  header h1 { font-size:20px; }
+  .badge { background:#fff; border-radius:999px; padding:4px 12px; font-size:12px; }
+  .badge.risk { color:#c0392b; }
+  main { max-width:1080px; margin:24px auto; padding:0 20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:18px; }
+  .card h2 { font-size:15px; margin-bottom:12px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  input[type=text], input[type=number] { border:1px solid var(--line); border-radius:8px; padding:9px 12px; font-size:14px; }
+  input[type=text] { flex:1; min-width:220px; }
+  input[type=number] { width:72px; }
+  button { background:var(--ink); color:#fff; border:0; border-radius:8px; padding:10px 18px; font-size:14px; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover { background:#fffbe0; }
+  .price { color:#d63339; font-weight:600; }
+  .muted { color:var(--muted); }
+  #msg { margin-top:10px; font-size:13px; min-height:18px; }
+  #msg.err { color:#c0392b; }
+  /* 详情弹层 */
+  #mask { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:flex-start; justify-content:center; padding:48px 16px; }
+  #mask.show { display:flex; }
+  #panel { background:#fff; border-radius:14px; max-width:720px; width:100%; padding:22px 24px; max-height:82vh; overflow:auto; }
+  #panel h3 { margin-bottom:8px; font-size:16px; }
+  #panel .imgs { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  #panel .imgs img { width:96px; height:96px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
+  #panel pre { white-space:pre-wrap; font-family:inherit; font-size:13px; line-height:1.7; color:#444; }
+  .close { float:right; border:0; background:none; font-size:18px; cursor:pointer; }
+  .spin { display:inline-block; width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:s .7s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes s { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>闲鱼采集台</h1>
+  <span class="badge" id="acct">账号: -</span>
+  <span class="badge" id="risk">风控: 正常</span>
+  <span class="badge" id="counts">采集: -</span>
+</header>
+<main>
+  <div class="card">
+    <h2>采集任务</h2>
+    <div class="row">
+      <input type="text" id="kw" placeholder="搜索关键词，如：iPhone 13 128g" value="">
+      <label class="muted">页数 <input type="number" id="pages" value="1" min="1" max="10"></label>
+      <label class="muted">详情条数 <input type="number" id="top" value="0" min="0" max="20"></label>
+      <button id="go" onclick="collect()">开始采集</button>
+      <button class="ghost" onclick="loadStatus()">刷新状态</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>已采集商品 <span class="muted" id="filterNote"></span></h2>
+    <table>
+      <thead><tr><th style="width:110px">商品ID</th><th>标题</th><th style="width:90px">价格</th><th style="width:70px">想要</th><th style="width:80px">操作</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<div id="mask" onclick="if(event.target===this)closePanel()">
+  <div id="panel">
+    <button class="close" onclick="closePanel()">✕</button>
+    <h3 id="pTitle"></h3>
+    <div class="muted" id="pMeta"></div>
+    <div class="imgs" id="pImgs"></div>
+    <pre id="pDesc"></pre>
+  </div>
+</div>
+
+<script>
+let busy = false;
+
+async function loadStatus() {
+  const s = await (await fetch('/api/status')).json();
+  document.getElementById('acct').textContent = '账号: ' + (s.accounts[0] || '未登录');
+  document.getElementById('counts').textContent = `采集: 商品${s.counts.items} / 详情${s.counts.details}`;
+  const r = Object.values(s.risk).find(g => g.blocked);
+  const el = document.getElementById('risk');
+  el.textContent = r ? `风控: 冷却 ${Math.ceil(r.remaining/60)} 分钟` : '风控: 正常';
+  el.className = 'badge' + (r ? ' risk' : '');
+}
+
+async function loadItems() {
+  const kw = document.getElementById('kw').value.trim();
+  const list = await (await fetch('/api/items?limit=50&keyword=' + encodeURIComponent(kw))).json();
+  document.getElementById('filterNote').textContent = kw ? `（筛选: ${kw}）` : '';
+  document.getElementById('rows').innerHTML = list.map(it => `
+    <tr onclick="openDetail('${it.item_id}')">
+      <td class="muted">${it.item_id}</td>
+      <td>${esc(it.title)}</td>
+      <td class="price">¥${esc(it.price)}</td>
+      <td class="muted">${it.want_count}</td>
+      <td><button class="ghost" onclick="event.stopPropagation();openDetail('${it.item_id}')">详情</button></td>
+    </tr>`).join('') || '<tr><td colspan="5" class="muted">暂无数据，先跑一次采集</td></tr>';
+}
+
+async function collect() {
+  if (busy) return;
+  const kw = document.getElementById('kw').value.trim();
+  if (!kw) { msg('请输入关键词', true); return; }
+  busy = true;
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>采集中…';
+  msg('任务执行中（含频控间隔，页数多时耗时较长）…');
+  try {
+    const body = {
+      keyword: kw,
+      pages: +document.getElementById('pages').value || 1,
+      top: +document.getElementById('top').value || 0,
+    };
+    const r = await fetch('/api/collect', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok || data.ok === false) {
+      msg('失败: ' + (data.error || data.detail || r.status), true);
+      if (data.kind === 'risk') msg('已触发风控熔断，等待冷却后重试，或运行 poc/x5sec_flow2.py 解题', true);
+    } else {
+      msg(`✅ 入库 ${data.items} 条商品，${data.details} 条详情，用时 ${data.seconds}s`);
+    }
+  } catch (e) { msg('请求异常: ' + e, true); }
+  btn.disabled = false; btn.textContent = '开始采集'; busy = false;
+  loadStatus(); loadItems();
+}
+
+async function openDetail(id) {
+  const r = await (await fetch('/api/items/' + id)).json();
+  const it = r.item, d = r.detail;
+  document.getElementById('pTitle').textContent = d ? d.title : it.title;
+  document.getElementById('pMeta').textContent =
+    `¥${d ? d.price : it.price} · 想要 ${it.want_count} · ${it.area || ''} · 卖家 ${it.seller || '-'}` +
+    (d && d.quantity ? ` · 库存 ${d.quantity}` : '');
+  const urls = d ? d.image_urls : [];
+  document.getElementById('pImgs').innerHTML = urls.length
+    ? urls.map(u => `<img src="${u}" onerror="this.style.opacity=.2">`).join('')
+    : '<span class="muted">未采集详情（列表里点「详情」按钮可单独采）</span>';
+  document.getElementById('pDesc').textContent = d ? (d.descr || '（无描述）') : '';
+  document.getElementById('mask').classList.add('show');
+}
+
+function closePanel() { document.getElementById('mask').classList.remove('show'); }
+function msg(text, err) { const el = document.getElementById('msg'); el.textContent = text; el.className = err ? 'err' : ''; }
+function esc(s) { return (s || '').replace(/</g, '&lt;'); }
+
+loadStatus(); loadItems();
+setInterval(loadStatus, 15000);
+</script>
+</body>
+</html>

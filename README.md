@@ -21,17 +21,32 @@ poc/               # POC 验证脚本（含 x5sec 解题流程）
 
 ```bash
 uv venv --python 3.12
-uv pip install --python .venv/bin/python httpx qrcode
+uv pip install --python .venv/bin/python httpx qrcode fastapi uvicorn
 
 # 1) 登录（二选一）
 .venv/bin/python cli.py login                          # 扫码
 .venv/bin/python cli.py import-session                 # 迁移 poc 已验证会话
 
-# 2) 采集
+# 2a) Web 管理页（推荐）
+.venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 8787
+# 打开 http://127.0.0.1:8787 —— 顶栏账号/风控状态，输入关键词一键采集
+
+# 2b) 或命令行
 .venv/bin/python cli.py search "iPhone 13" --pages 2
 .venv/bin/python cli.py chain "iPhone 13" --top 3
 .venv/bin/python cli.py items
 ```
+
+## 服务器版（Web）
+
+`server/app.py` 是核心包的第一层壳：FastAPI + 单文件管理页，零前端依赖。
+
+- `GET /` 管理页（账号/风控状态徽章、采集表单、商品表格、详情弹层）
+- `GET /api/status` 账号与风控状态、库内统计
+- `POST /api/collect` `{keyword, pages, top, account}` 搜索+详情采集（单飞锁，同一时刻仅一个任务）
+- `GET /api/items?limit&keyword` 商品列表；`GET /api/items/{id}` 详情（含图片）
+
+采集结束后刷新过的 cookie/令牌自动回写 `data/accounts/<name>/session.json`。
 
 ## 铁律（实测教训，违反即被风控）
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import urllib.parse
 from datetime import datetime
 
 from .mtop import MtopClient, MtopError
@@ -140,7 +141,8 @@ class Collector:
         self.guard.acquire()
         payload = dict(SEARCH_PAYLOAD, keyword=keyword, pageNumber=page)
         try:
-            res = self.client.call(SEARCH_API, payload, referer=f"https://www.goofish.com/search?keyword={keyword}")
+            referer_kw = urllib.parse.quote(keyword)
+            res = self.client.call(SEARCH_API, payload, referer=f"https://www.goofish.com/search?keyword={referer_kw}")
             items = parse_search_items(res)
             n = self.store.upsert_items(items, keyword=keyword)
             self.guard.reset()

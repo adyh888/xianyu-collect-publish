@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -49,10 +50,13 @@ class Store:
     def __init__(self, db_path: Path | str):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path)
+        # FastAPI 线程池会跨线程使用连接：check_same_thread=False + 写锁
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(SCHEMA)
-        self._conn.commit()
+        self._lock = threading.Lock()
+        with self._lock:
+            self._conn.executescript(SCHEMA)
+            self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
@@ -61,7 +65,7 @@ class Store:
 
     def upsert_items(self, items: list, keyword: str = "") -> int:
         now = time.time()
-        with self._conn:
+        with self._lock, self._conn:
             for it in items:
                 self._conn.execute(
                     """
@@ -86,7 +90,7 @@ class Store:
         return len(items)
 
     def upsert_detail(self, item_id: str, detail: dict) -> None:
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 """
                 INSERT INTO item_details (item_id, title, price, descr, image_urls,
@@ -118,10 +122,12 @@ class Store:
             params = (f"%{keyword}%",)
         sql += " ORDER BY updated_at DESC LIMIT ?"
         params += (limit,)
-        return [dict(r) for r in self._conn.execute(sql, params)]
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, params)]
 
     def get_detail(self, item_id: str) -> dict | None:
-        row = self._conn.execute("SELECT * FROM item_details WHERE item_id=?", (item_id,)).fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM item_details WHERE item_id=?", (item_id,)).fetchone()
         if not row:
             return None
         d = dict(row)
@@ -129,7 +135,7 @@ class Store:
         return d
 
     def log(self, action: str, keyword: str = "", ok: bool = True, count: int = 0, message: str = "") -> None:
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO collect_log (ts, action, keyword, ok, count, message) VALUES (?,?,?,?,?,?)",
                 (time.time(), action, keyword, 1 if ok else 0, count, message[:500]),
