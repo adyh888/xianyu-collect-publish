@@ -86,6 +86,12 @@
     <div id="pSkus"></div>
     <div class="imgs" id="pImgs"></div>
     <pre id="pDesc"></pre>
+    <div class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+      <label class="muted">加价率 % <input type="number" id="pubMarkup" value="20" min="0" max="200" style="width:64px"></label>
+      <input type="text" id="pubAddr" placeholder="宝贝所在地，如：合肥 政务区" style="flex:1;min-width:180px">
+      <button id="pubBtn" onclick="publishItem()">🚀 克隆发布到我的闲鱼</button>
+    </div>
+    <div id="pubMsg" style="margin-top:8px;font-size:13px"></div>
   </div>
 </div>
 
@@ -173,6 +179,7 @@ async function collectShop() {
 }
 
 async function openDetail(id) {
+  currentDetailId = id;
   const r = await (await fetch('/api/items/' + id)).json();
   const it = r.item, d = r.detail;
   document.getElementById('pTitle').textContent = d ? d.title : it.title;
@@ -191,10 +198,40 @@ async function openDetail(id) {
     ? urls.map(u => `<img src="${u}" onerror="this.style.opacity=.2">`).join('')
     : '<span class="muted">未采集详情（列表里点「详情」按钮可单独采）</span>';
   document.getElementById('pDesc').textContent = d ? (d.descr || '（无描述）') : '';
+  document.getElementById('pubMsg').textContent = '';
+  document.getElementById('pubBtn').parentElement.style.display = d ? 'flex' : 'none';
   document.getElementById('mask').classList.add('show');
 }
 
 function closePanel() { document.getElementById('mask').classList.remove('show'); }
+
+let currentDetailId = null;
+
+async function publishItem() {
+  const id = currentDetailId;
+  if (!id) return;
+  const markup = +document.getElementById('pubMarkup').value || 0;
+  const address = document.getElementById('pubAddr').value.trim();
+  if (!confirm(`确认把「${document.getElementById('pTitle').textContent.slice(0, 30)}…」以加价 ${markup}% 克隆发布到你自己的闲鱼？\n将创建真实在售商品！`)) return;
+  const btn = document.getElementById('pubBtn');
+  btn.disabled = true;
+  const el = document.getElementById('pubMsg');
+  el.textContent = '发布中：转存图片 → 构造载荷 → 提交（约 10-30 秒）…';
+  try {
+    const r = await fetch('/api/publish', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({item_id: id, markup, address}),
+    });
+    const data = await r.json();
+    if (data.success) {
+      el.innerHTML = `✅ 发布成功 <a href="${data.item_url}" target="_blank">${data.item_id}</a>`;
+    } else {
+      el.textContent = '❌ 发布失败: ' + (data.message || '未知错误');
+      if (data.kind === 'risk') el.textContent += '（命中风控，等冷却或用解题流程）';
+    }
+  } catch (e) { el.textContent = '请求异常: ' + e; }
+  btn.disabled = false;
+}
 function msg(text, err) { const el = document.getElementById('msg'); el.textContent = text; el.className = err ? 'err' : ''; }
 function esc(s) { return (s || '').replace(/</g, '&lt;'); }
 

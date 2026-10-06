@@ -69,6 +69,12 @@ def main() -> int:
     p.add_argument("--pages", type=int, default=5)
     p.add_argument("--account", default="default")
 
+    p = sub.add_parser("publish", help="克隆发布（把已采详情发布到自己的闲鱼）")
+    p.add_argument("item_id")
+    p.add_argument("--markup", type=float, default=0.0, help="加价率百分比，如 20 表示加价 20%%")
+    p.add_argument("--address", default="", help="宝贝所在地文本（如：合肥 政务区），空则需提前配置")
+    p.add_argument("--account", default="default")
+
     p = sub.add_parser("items", help="查看已采集商品")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--keyword", default="")
@@ -133,6 +139,25 @@ def main() -> int:
         total = collector.seller_items(args.user_id, max_pages=args.pages)
         print(f"✅ 店铺 {args.user_id} 入库 {total} 条（keyword=seller:{args.user_id}，用 items --keyword seller:{args.user_id} 查看）")
         return 0
+
+    if args.cmd == "publish":
+        accounts, account, collector = build(args.account)
+        detail = collector.store.get_detail(args.item_id)
+        if not detail:
+            print(f"❌ 商品 {args.item_id} 没有详情数据，先 chain/detail 采集")
+            return 1
+        from xianyu_collect.mtop import MtopClient as _C
+        from xianyu_collect.publish import clone_item
+        client = _C(account.cookies, ua=account.ua)
+        result = clone_item(client, detail, account.unb or args.account,
+                            markup_pct=args.markup, address_text=args.address)
+        account.cookies = client.cookies
+        accounts.save(account)
+        if result.get("success"):
+            print(f"✅ 发布成功: {result['item_id']} {result['item_url']}")
+            return 0
+        print(f"❌ 发布失败: {result.get('message')}")
+        return 2
 
     if args.cmd == "items":
         store = Store(DATA / "collect.db")

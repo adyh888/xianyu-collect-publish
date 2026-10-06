@@ -99,6 +99,13 @@ class ShopReq(BaseModel):
     account: str = "default"
 
 
+class PublishReq(BaseModel):
+    item_id: str
+    markup: float = 0.0
+    address: str = ""
+    account: str = "default"
+
+
 @app.get("/")
 def index():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
@@ -131,6 +138,35 @@ def collect_shop(req: ShopReq):
     if not req.user_id.strip().isdigit():
         raise HTTPException(400, "卖家 userId 应为数字")
     return _guarded_collect(lambda: _collect_shop(req.account, req.user_id.strip(), req.pages))
+
+
+@app.post("/api/publish")
+def publish(req: PublishReq):
+    """克隆发布：把已采详情发布到指定账号（创建真实商品，前端需二次确认）。"""
+    detail = _store.get_detail(req.item_id)
+    if not detail:
+        raise HTTPException(404, "该商品还没有详情数据，先采集详情")
+    if not _collect_lock.acquire(blocking=False):
+        raise HTTPException(429, "已有采集/发布任务在跑")
+    try:
+        account = _accounts.load(req.account)
+        if not account:
+            raise HTTPException(404, f"账号 {req.account} 不存在")
+        guard = _guard(req.account)
+        guard.acquire()
+        client = MtopClient(account.cookies, ua=account.ua)
+        from xianyu_collect.publish import clone_item
+        result = clone_item(
+            client, detail, account.unb or req.account,
+            markup_pct=req.markup, address_text=req.address, log=lambda *_: None,
+        )
+        account.cookies = client.cookies
+        _accounts.save(account)
+        return result
+    except RiskBlocked as exc:
+        return {"success": False, "message": str(exc), "kind": "risk"}
+    finally:
+        _collect_lock.release()
 
 
 def _guarded_collect(job):
