@@ -1,0 +1,19 @@
+# 会话与数据（含登录态，严禁入库/外传）
+data/
+poc/cookie*.txt
+poc/cookie_enriched.txt
+poc/ua.txt
+poc/x5sec.txt
+poc/*.json
+poc/.browser_profile/
+poc/.chrome_profile/
+poc/login_qr.png
+poc/verify_qr.png
+
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+
+# 扫码登录二维码
+login_qr.png
