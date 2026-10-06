@@ -40,6 +40,30 @@ def _guard(name: str) -> RiskGuard:
 
 def _collect(account_name: str, keyword: str, pages: int, top: int) -> dict:
     """搜索 pages 页 + 前 top 条详情；结束后把刷新过的 cookie 回写会话。"""
+    return _run_collect(account_name, lambda c: _do_search(c, keyword, pages, top))
+
+
+def _do_search(collector: Collector, keyword: str, pages: int, top: int) -> dict:
+    total = 0
+    for page in range(1, max(1, pages) + 1):
+        total += collector.search(keyword, page=page)
+    details = 0
+    for row in _store.list_items(limit=max(0, top), keyword=keyword):
+        try:
+            collector.detail(row["item_id"])
+            details += 1
+        except MtopError as exc:
+            if exc.kind == "risk":
+                break  # 熔断生效，停止本轮
+    return {"items": total, "details": details}
+
+
+def _collect_shop(account_name: str, user_id: str, pages: int) -> dict:
+    return _run_collect(account_name, lambda c: {"items": c.seller_items(user_id, max_pages=max(1, pages)), "details": 0})
+
+
+def _run_collect(account_name: str, job) -> dict:
+    """采集通用壳：加载账号 → 执行 → cookie 回写 → 风控归一化返回。"""
     account = _accounts.load(account_name)
     if not account:
         raise HTTPException(404, f"账号 {account_name} 不存在")
@@ -50,25 +74,10 @@ def _collect(account_name: str, keyword: str, pages: int, top: int) -> dict:
     collector = Collector(client, _store, guard, log=lambda *_: None)
     started = time.time()
     try:
-        total = 0
-        for page in range(1, max(1, pages) + 1):
-            total += collector.search(keyword, page=page)
-        details = []
-        for row in _store.list_items(limit=max(0, top), keyword=keyword):
-            try:
-                details.append(collector.detail(row["item_id"]))
-            except MtopError as exc:
-                if exc.kind == "risk":
-                    break  # 熔断生效，停止本轮
-        # 令牌/cookie 刷新落盘
+        result = job(collector)
         account.cookies = client.cookies
         _accounts.save(account)
-        return {
-            "ok": True,
-            "items": total,
-            "details": len(details),
-            "seconds": round(time.time() - started, 1),
-        }
+        return {"ok": True, "seconds": round(time.time() - started, 1), **result}
     except MtopError as exc:
         account.cookies = client.cookies
         _accounts.save(account)
@@ -81,6 +90,12 @@ class CollectReq(BaseModel):
     keyword: str
     pages: int = 1
     top: int = 0
+    account: str = "default"
+
+
+class ShopReq(BaseModel):
+    user_id: str
+    pages: int = 5
     account: str = "default"
 
 
@@ -108,10 +123,21 @@ def status():
 def collect(req: CollectReq):
     if not req.keyword.strip():
         raise HTTPException(400, "关键词不能为空")
+    return _guarded_collect(lambda: _collect(req.account, req.keyword.strip(), req.pages, req.top))
+
+
+@app.post("/api/collect-shop")
+def collect_shop(req: ShopReq):
+    if not req.user_id.strip().isdigit():
+        raise HTTPException(400, "卖家 userId 应为数字")
+    return _guarded_collect(lambda: _collect_shop(req.account, req.user_id.strip(), req.pages))
+
+
+def _guarded_collect(job):
     if not _collect_lock.acquire(blocking=False):
         raise HTTPException(429, "已有采集任务在跑，稍等片刻")
     try:
-        return _collect(req.account, req.keyword.strip(), req.pages, req.top)
+        return job()
     finally:
         _collect_lock.release()
 

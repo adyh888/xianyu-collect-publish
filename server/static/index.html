@@ -61,6 +61,11 @@
       <button id="go" onclick="collect()">开始采集</button>
       <button class="ghost" onclick="loadStatus()">刷新状态</button>
     </div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="shopUid" placeholder="店铺采集：粘贴卖家 userId（商品详情页可查）" style="flex:1;min-width:220px">
+      <label class="muted">页数 <input type="number" id="shopPages" value="5" min="1" max="45"></label>
+      <button class="ghost" onclick="collectShop()">进店采集</button>
+    </div>
     <div id="msg"></div>
   </div>
 
@@ -78,6 +83,7 @@
     <button class="close" onclick="closePanel()">✕</button>
     <h3 id="pTitle"></h3>
     <div class="muted" id="pMeta"></div>
+    <div id="pSkus"></div>
     <div class="imgs" id="pImgs"></div>
     <pre id="pDesc"></pre>
   </div>
@@ -141,6 +147,31 @@ async function collect() {
   loadStatus(); loadItems();
 }
 
+async function collectShop() {
+  if (busy) return;
+  const uid = document.getElementById('shopUid').value.trim();
+  if (!/^\d+$/.test(uid)) { msg('请输入数字卖家 userId', true); return; }
+  busy = true;
+  const btn = event.target;
+  btn.disabled = true;
+  msg('进店采集中（每页 20 件，含频控间隔）…');
+  try {
+    const r = await fetch('/api/collect-shop', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: uid, pages: +document.getElementById('shopPages').value || 5}),
+    });
+    const data = await r.json();
+    if (!r.ok || data.ok === false) {
+      msg('失败: ' + (data.error || data.detail || r.status), true);
+    } else {
+      msg(`✅ 店铺 ${uid} 入库 ${data.items} 件，用时 ${data.seconds}s（列表自动按该店铺过滤）`);
+      document.getElementById('kw').value = 'seller:' + uid;
+    }
+  } catch (e) { msg('请求异常: ' + e, true); }
+  btn.disabled = false; busy = false;
+  loadStatus(); loadItems();
+}
+
 async function openDetail(id) {
   const r = await (await fetch('/api/items/' + id)).json();
   const it = r.item, d = r.detail;
@@ -149,6 +180,13 @@ async function openDetail(id) {
     `¥${d ? d.price : it.price} · 想要 ${it.want_count} · ${it.area || ''} · 卖家 ${it.seller || '-'}` +
     (d && d.quantity ? ` · 库存 ${d.quantity}` : '');
   const urls = d ? d.image_urls : [];
+  const skus = d ? (d.skus || []) : [];
+  document.getElementById('pSkus').innerHTML = skus.length ? `
+    <table style="margin:10px 0"><thead><tr><th>规格</th><th style="width:90px">价格</th><th style="width:70px">库存</th></tr></thead>
+    <tbody>${skus.map(s => `
+      <tr><td>${esc((s.props || []).map(p => `${p.name}:${p.value}`).join(' / '))}</td>
+      <td class="price">¥${s.price}</td><td class="muted">${s.quantity}</td></tr>`).join('')}
+    </tbody></table>` : '';
   document.getElementById('pImgs').innerHTML = urls.length
     ? urls.map(u => `<img src="${u}" onerror="this.style.opacity=.2">`).join('')
     : '<span class="muted">未采集详情（列表里点「详情」按钮可单独采）</span>';

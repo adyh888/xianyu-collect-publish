@@ -60,9 +60,13 @@ uv pip install --python .venv/bin/python httpx qrcode fastapi uvicorn
 | 接口 | 用途 | 状态 |
 |---|---|---|
 | `mtop.taobao.idlemtopsearch.pc.search`/1.0 | 关键词搜索（30条/页） | ✅ 稳定 |
-| `mtop.taobao.idle.pc.detail`/1.0 | 商品详情（标题/价格/描述/图片/quantity） | ✅ 稳定（偶发风控，走解题流程） |
+| `mtop.taobao.idle.pc.detail`/1.0 | 商品详情（标题/价格/描述/图片/**SKU规格**/数量） | ✅ 稳定（偶发风控，走解题流程） |
+| `mtop.idle.web.xyh.item.list`/1.0 | **店铺全店采集**（20件/页，`/personal?userId=` 页面同款） | ✅ 稳定 |
 | `mtop.idle.pc.backend.idleitem.publish` | 直连发布（上游已实现，P3 接入） | ⏳ 待移植 |
 | `mtop.common.getTimestamp` | 免登录连通性检查 | ✅ |
+
+**多规格结构**（2026-10-06 确认）：`itemDO.skuList[]` → `propertyList[]`(propertyText/valueText) + `priceInCent` + `quantity` + `propertyImage.url`（规格图）。
+**卖家主页**：`https://www.goofish.com/personal?userId=<卖家ID>`；详情响应 `data.sellerDO.sellerId` 可直接取到卖家 ID。
 
 ## 待办（P1 → P2）
 

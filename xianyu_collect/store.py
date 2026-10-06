@@ -29,8 +29,9 @@ CREATE TABLE IF NOT EXISTS item_details (
     price        TEXT,
     descr        TEXT,
     image_urls   TEXT,  -- JSON 数组
-    sku_json     TEXT,  -- JSON（多规格待确认结构）
+    sku_json     TEXT,  -- JSON [{props, price, quantity, image}]
     quantity     INTEGER,
+    seller_id    TEXT,
     raw_json     TEXT,
     collected_at REAL
 );
@@ -56,6 +57,10 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            # 轻量迁移：旧库补列
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(item_details)")}
+            if "seller_id" not in cols:
+                self._conn.execute("ALTER TABLE item_details ADD COLUMN seller_id TEXT")
             self._conn.commit()
 
     def close(self) -> None:
@@ -94,19 +99,20 @@ class Store:
             self._conn.execute(
                 """
                 INSERT INTO item_details (item_id, title, price, descr, image_urls,
-                                          sku_json, quantity, raw_json, collected_at)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                                          sku_json, quantity, seller_id, raw_json, collected_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(item_id) DO UPDATE SET
                     title=excluded.title, price=excluded.price, descr=excluded.descr,
                     image_urls=excluded.image_urls, sku_json=excluded.sku_json,
-                    quantity=excluded.quantity, raw_json=excluded.raw_json,
-                    collected_at=excluded.collected_at
+                    quantity=excluded.quantity, seller_id=excluded.seller_id,
+                    raw_json=excluded.raw_json, collected_at=excluded.collected_at
                 """,
                 (
                     item_id, detail.get("title"), detail.get("price"), detail.get("desc"),
                     json.dumps(detail.get("images") or [], ensure_ascii=False),
                     json.dumps(detail.get("skus") or [], ensure_ascii=False),
                     detail.get("quantity"),
+                    detail.get("seller_id") or "",
                     json.dumps(detail.get("raw_data"), ensure_ascii=False),
                     time.time(),
                 ),
@@ -132,6 +138,7 @@ class Store:
             return None
         d = dict(row)
         d["image_urls"] = json.loads(d.get("image_urls") or "[]")
+        d["skus"] = json.loads(d.get("sku_json") or "[]")
         return d
 
     def log(self, action: str, keyword: str = "", ok: bool = True, count: int = 0, message: str = "") -> None:

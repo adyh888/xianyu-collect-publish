@@ -64,6 +64,11 @@ def main() -> int:
     p.add_argument("--top", type=int, default=1)
     p.add_argument("--account", default="default")
 
+    p = sub.add_parser("shop", help="店铺全店采集（卖家 userId）")
+    p.add_argument("user_id")
+    p.add_argument("--pages", type=int, default=5)
+    p.add_argument("--account", default="default")
+
     p = sub.add_parser("items", help="查看已采集商品")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--keyword", default="")
@@ -122,6 +127,12 @@ def main() -> int:
             print(f"  - {d['item_id']} {d['title'][:36]} ¥{d['price']} 图片{len(d['images'])}张")
         print(f"✅ 链路完成：{len(details)}/{args.top} 条详情入库")
         return 0 if len(details) == args.top else 1
+
+    if args.cmd == "shop":
+        accounts, account, collector = build(args.account)
+        total = collector.seller_items(args.user_id, max_pages=args.pages)
+        print(f"✅ 店铺 {args.user_id} 入库 {total} 条（keyword=seller:{args.user_id}，用 items --keyword seller:{args.user_id} 查看）")
+        return 0
 
     if args.cmd == "items":
         store = Store(DATA / "collect.db")
