@@ -103,7 +103,20 @@ class PublishReq(BaseModel):
     item_id: str
     markup: float = 0.0
     address: str = ""
+    address_dto: dict | None = None   # 地址选择器选中的 POI（divisionId/gps/poiId/poiName）
     account: str = "default"
+
+
+@app.get("/api/amap/tips")
+def amap_tips_api(keywords: str):
+    """所在地候选列表（高德 inputtips，前端下拉选择用）。"""
+    if not keywords.strip():
+        return []
+    from xianyu_collect.publish import amap_tips, PublishError
+    try:
+        return amap_tips(keywords.strip())
+    except PublishError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.get("/")
@@ -146,9 +159,12 @@ def publish(req: PublishReq):
     row = _store.get_detail(req.item_id)
     if not row:
         raise HTTPException(404, "该商品还没有详情数据，先采集详情")
-    if not req.address.strip():
-        raise HTTPException(400, "请填写宝贝所在地（发布必需）")
     from xianyu_collect.publish import PublishError, detail_from_store_row
+    address_dto = req.address_dto or None
+    if address_dto and not all(address_dto.get(k) for k in ("divisionId", "gps", "poiId")):
+        raise HTTPException(400, "地址数据无效，请重新从下拉列表选择")
+    if not address_dto and not req.address.strip():
+        raise HTTPException(400, "请先选择宝贝所在地")
     detail = detail_from_store_row(row)
     if not _collect_lock.acquire(blocking=False):
         raise HTTPException(429, "已有采集/发布任务在跑")
@@ -162,7 +178,8 @@ def publish(req: PublishReq):
         from xianyu_collect.publish import clone_item
         result = clone_item(
             client, detail, account.unb or req.account,
-            markup_pct=req.markup, address_text=req.address.strip(), log=lambda *_: None,
+            markup_pct=req.markup, address_dto=address_dto,
+            address_text=req.address.strip(), log=lambda *_: None,
         )
         account.cookies = client.cookies
         _accounts.save(account)

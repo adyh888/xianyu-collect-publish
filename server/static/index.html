@@ -88,7 +88,10 @@
     <pre id="pDesc"></pre>
     <div class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
       <label class="muted">加价率 % <input type="number" id="pubMarkup" value="20" min="0" max="200" style="width:64px"></label>
-      <input type="text" id="pubAddr" placeholder="宝贝所在地，如：合肥 政务区" style="flex:1;min-width:180px">
+      <div style="position:relative;flex:1;min-width:180px">
+        <input type="text" id="pubAddr" placeholder="宝贝所在地：输入关键词，从下拉选择" style="width:100%" autocomplete="off">
+        <div id="addrList" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:8px;max-height:240px;overflow:auto;z-index:50;box-shadow:0 6px 18px rgba(0,0,0,.12)"></div>
+      </div>
       <button id="pubBtn" onclick="publishItem()">🚀 克隆发布到我的闲鱼</button>
     </div>
     <div id="pubMsg" style="margin-top:8px;font-size:13px"></div>
@@ -206,14 +209,50 @@ async function openDetail(id) {
 function closePanel() { document.getElementById('mask').classList.remove('show'); }
 
 let currentDetailId = null;
+let selectedAddr = null;
+let addrTimer = null;
+
+document.getElementById('pubAddr').addEventListener('input', (e) => {
+  const kw = e.target.value.trim();
+  selectedAddr = null;
+  clearTimeout(addrTimer);
+  if (!kw) { document.getElementById('addrList').style.display = 'none'; return; }
+  addrTimer = setTimeout(async () => {
+    try {
+      const tips = await (await fetch('/api/amap/tips?keywords=' + encodeURIComponent(kw))).json();
+      const box = document.getElementById('addrList');
+      box.innerHTML = tips.length
+        ? tips.map((t, i) => `<div class="addr-item" data-i="${i}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--line)">
+             <b>${esc(t.name)}</b><span class="muted" style="font-size:12px"> ${esc(t.district)} ${esc(t.address)}</span></div>`).join('')
+        : '<div class="addr-item muted" style="padding:8px 12px">无匹配结果，换个关键词试试</div>';
+      box.style.display = 'block';
+      box.querySelectorAll('.addr-item[data-i]').forEach(el => {
+        el.onmouseenter = () => el.style.background = '#fffbe0';
+        el.onmouseleave = () => el.style.background = '';
+        el.onclick = () => {
+          selectedAddr = tips[+el.dataset.i];
+          document.getElementById('pubAddr').value = selectedAddr.name;
+          box.style.display = 'none';
+        };
+      });
+    } catch (_) {}
+  }, 400);
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#pubAddr') && !e.target.closest('#addrList')) {
+    document.getElementById('addrList').style.display = 'none';
+  }
+});
 
 async function publishItem() {
   const id = currentDetailId;
   if (!id) return;
   const markup = +document.getElementById('pubMarkup').value || 0;
   const address = document.getElementById('pubAddr').value.trim();
-  if (!address) { document.getElementById('pubMsg').textContent = '请先填写宝贝所在地（发布必需）'; return; }
-  if (!confirm(`确认把「${document.getElementById('pTitle').textContent.slice(0, 30)}…」以加价 ${markup}% 克隆发布到你自己的闲鱼？\n将创建真实在售商品！`)) return;
+  if (!selectedAddr && !address) { document.getElementById('pubMsg').textContent = '请先输入并从下拉列表选择宝贝所在地'; return; }
+  const payload = {item_id: id, markup, address};
+  if (selectedAddr) payload.address_dto = selectedAddr;
+  if (!confirm(`确认以加价 ${markup}% 克隆发布到你自己的闲鱼？\n将创建真实在售商品！`)) return;
   const btn = document.getElementById('pubBtn');
   btn.disabled = true;
   const el = document.getElementById('pubMsg');
@@ -221,7 +260,7 @@ async function publishItem() {
   try {
     const r = await fetch('/api/publish', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({item_id: id, markup, address}),
+      body: JSON.stringify(payload),
     });
     const text = await r.text();
     let data;

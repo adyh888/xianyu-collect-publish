@@ -162,27 +162,66 @@ def transfer_image(source_url: str, cookie: str, ua: str) -> dict:
 
 # ---------------------------------------------------------------- 地址
 
-def resolve_address(address_text: str) -> dict:
-    """文本地址 → 高德 inputtips → itemAddrDTO。"""
-    params = urllib.parse.urlencode({"key": AMAP_WEB_KEY, "keywords": address_text})
+AMAP_PARAMS = {
+    "s": "rsv3", "key": AMAP_WEB_KEY, "platform": "JS",
+    "logversion": "2.0", "sdkversion": "2.0",
+    "appname": SELLER_ORIGIN, "citylimit": "false", "datatype": "all",
+}
+AMAP_HEADERS = {
+    "Origin": SELLER_ORIGIN, "Referer": f"{SELLER_ORIGIN}/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+}
+
+
+def _amap_request(keywords: str, city: str = "全国") -> dict:
+    params = dict(AMAP_PARAMS, keywords=keywords, city=city or "全国")
     req = urllib.request.Request(
-        f"{AMAP_INPUTTIPS_URL}?{params}",
-        headers={"Referer": SELLER_ORIGIN, "User-Agent": "Mozilla/5.0"},
+        f"{AMAP_INPUTTIPS_URL}?{urllib.parse.urlencode(params)}", headers=AMAP_HEADERS,
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         result = json.loads(resp.read().decode("utf-8", "replace"))
-    tips = [t for t in result.get("tips") or []
-            if isinstance(t, dict) and _text(t.get("id")) and _text(t.get("adcode")) and _text(t.get("location"))]
+    if str(result.get("status")) != "1":
+        raise PublishError(f"高德接口失败: {result.get('info')}")
+    return result
+
+
+def amap_tips(keywords: str, city: str = "全国") -> list:
+    """地址关键词 → 候选 POI 列表（前端选择器用）。"""
+    result = _amap_request(keywords, city)
+    tips = []
+    for t in result.get("tips") or []:
+        if not isinstance(t, dict) or not _text(t.get("name")):
+            continue
+        tips.append({
+            "id": _text(t.get("id")),
+            "name": _text(t.get("name")),
+            "district": _text(t.get("district")),
+            "adcode": _text(t.get("adcode")),
+            "location": _text(t.get("location")),
+            "address": _text(t.get("address")),
+            "text": " ".join(x for x in (_text(t.get("name")), _text(t.get("district")), _text(t.get("address"))) if x),
+        })
+    return [t for t in tips if t["id"] and t["adcode"] and t["location"]]
+
+
+def tip_to_addr_dto(tip: dict) -> dict:
+    """选中的候选 → itemAddrDTO（gps 为 纬度,经度）。"""
+    lng, lat = tip["location"].split(",")[:2]
+    return {
+        "divisionId": tip["adcode"],
+        "gps": f"{float(lat):.6f},{float(lng):.6f}",
+        "poiId": tip["id"],
+        "poiName": tip["name"],
+    }
+
+
+def resolve_address(address_text: str) -> dict:
+    """文本地址 → 首个候选 → itemAddrDTO（无选择器场景的兜底）。"""
+    tips = amap_tips(address_text)
     if not tips:
         raise PublishError(f"地址未解析到有效 POI: {address_text}")
-    tip = tips[0]
-    lng, lat = _text(tip["location"]).split(",")[:2]
-    return {
-        "divisionId": _text(tip["adcode"]),
-        "gps": f"{float(lat):.6f},{float(lng):.6f}",
-        "poiId": _text(tip["id"]),
-        "poiName": _text(tip.get("name")),
-    }
+    return tip_to_addr_dto(tips[0])
 
 
 # ---------------------------------------------------------------- 载荷
@@ -454,10 +493,20 @@ def publish_item(client: MtopClient, payload: dict) -> dict:
 
 
 def clone_item(client: MtopClient, detail: dict, account_id: str,
-               markup_pct: float = 0.0, address_text: str = "", log=print) -> dict:
-    """完整克隆链路：表单映射 → 图片转存 → 载荷 → 发布。"""
+               markup_pct: float = 0.0, address_text: str = "", address_dto: dict | None = None,
+               log=print) -> dict:
+    """完整克隆链路：表单映射 → 图片转存 → 载荷 → 发布。
+
+    address_dto: 地址选择器选中的候选（含 location/adcode/id）或已转换的 itemAddrDTO；
+                 提供时跳过文本解析。
+    """
     form = clone_form_from_detail(detail, markup_pct)
-    if address_text:
+    if address_dto:
+        if not address_dto.get("gps") and address_dto.get("location"):
+            address_dto = tip_to_addr_dto(address_dto)
+        form["address_dto"] = address_dto
+        log(f"地址: {address_dto.get('poiName')}")
+    elif address_text:
         form["address_dto"] = resolve_address(address_text)
         log(f"地址已解析: {form['address_dto']['poiName']}")
 
