@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from xianyu_collect.account import AccountStore
+from xianyu_collect.account import Account, AccountStore
 from xianyu_collect.collection import Collector
 from xianyu_collect.mtop import MtopClient, MtopError
 from xianyu_collect.risk import RiskBlocked, RiskGuard
@@ -30,6 +30,7 @@ _accounts = AccountStore(DATA)
 _store = Store(DATA / "collect.db")
 _guards: dict = {}
 _collect_lock = threading.Lock()  # 单飞：全局一次只跑一个采集任务
+_login_sessions: dict = {}       # sid -> 登录会话状态（网页扫码用）
 
 
 def _guard(name: str) -> RiskGuard:
@@ -159,10 +160,16 @@ def publish(req: PublishReq):
     row = _store.get_detail(req.item_id)
     if not row:
         raise HTTPException(404, "该商品还没有详情数据，先采集详情")
-    from xianyu_collect.publish import PublishError, detail_from_store_row
+    from xianyu_collect.publish import PublishError, detail_from_store_row, tip_to_addr_dto
     address_dto = req.address_dto or None
-    if address_dto and not all(address_dto.get(k) for k in ("divisionId", "gps", "poiId")):
-        raise HTTPException(400, "地址数据无效，请重新从下拉列表选择")
+    if address_dto:
+        # 前端传的是高德候选原始结构（adcode/location/id），先转换再校验
+        try:
+            if not address_dto.get("gps") and address_dto.get("location"):
+                address_dto = tip_to_addr_dto(address_dto)
+            assert all(address_dto.get(k) for k in ("divisionId", "gps", "poiId"))
+        except Exception:
+            raise HTTPException(400, "地址数据无效，请重新从下拉列表选择")
     if not address_dto and not req.address.strip():
         raise HTTPException(400, "请先选择宝贝所在地")
     detail = detail_from_store_row(row)
@@ -190,6 +197,63 @@ def publish(req: PublishReq):
         return {"success": False, "message": str(exc), "kind": "risk"}
     finally:
         _collect_lock.release()
+
+
+class LoginReq(BaseModel):
+    name: str = "default"
+
+
+@app.post("/api/login/start")
+def login_start(req: LoginReq):
+    """网页扫码登录：生成二维码，前端轮询状态。"""
+    import asyncio
+    import uuid
+    sid = uuid.uuid4().hex
+    state = {"status": "starting", "unb": "", "png": "", "name": req.name, "error": "", "cookies": {}}
+    _login_sessions[sid] = state
+
+    def run():
+        from xianyu_collect.login import qr_login
+
+        def cb(status: str):
+            if status == "SCANED":
+                state["status"] = "scanned"
+            elif status == "CONFIRMED":
+                state["status"] = "confirming"
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                qr_login(log=lambda *_: None, status_cb=cb, timeout=300, png_out=state))
+            state["cookies"] = result.cookies
+            state["unb"] = result.unb
+            state["status"] = "success"
+        except Exception as exc:
+            state["error"] = str(exc)
+            state["status"] = "error"
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"sid": sid}
+
+
+@app.get("/api/login/status")
+def login_status(sid: str):
+    state = _login_sessions.get(sid)
+    if not state:
+        raise HTTPException(404, "登录会话不存在")
+    out = {"status": state["status"], "unb": state["unb"], "error": state["error"], "png": state["png"]}
+    if state["status"] == "success":
+        existing = _accounts.load(state["name"])
+        account = Account(
+            name=state["name"], cookies=state["cookies"],
+            ua=(existing.ua if existing else ""), unb=state["unb"],
+            updated_at=time.time(),
+        )
+        _accounts.save(account)
+        out["png"] = ""
+        _login_sessions.pop(sid, None)
+    return out
 
 
 def _guarded_collect(job):

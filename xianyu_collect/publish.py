@@ -130,7 +130,13 @@ def upload_image_content(content: bytes, cookie: str, ua: str, suffix: str = ".j
         },
     )
     with urllib.request.urlopen(req, timeout=90) as resp:
-        result = json.loads(resp.read().decode("utf-8", "replace"))
+        raw = resp.read().decode("utf-8", "replace")
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        if "<!DOCTYPE" in raw[:200] or "<html" in raw[:200].lower():
+            raise PublishError("图片上传失败：登录态已失效（返回登录页），请重新扫码登录")
+        raise PublishError(f"图片上传返回异常: {raw[:120]}")
     uploaded = result.get("object") if isinstance(result, dict) else None
     if not isinstance(uploaded, dict) or not uploaded.get("url") or result.get("success") is not True:
         raise PublishError(f"图片上传失败: {json.dumps(result, ensure_ascii=False)[:150]}")

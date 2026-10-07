@@ -53,6 +53,19 @@
 </header>
 <main>
   <div class="card">
+    <h2>账号登录</h2>
+    <div class="row">
+      <span class="badge" id="loginState">账号: -</span>
+      <button class="ghost" id="loginBtn" onclick="startLogin()">📱 扫码登录 / 换号</button>
+      <span class="muted" style="font-size:12px">会话失效（发布/上传报登录态问题）时，点这里重新扫码即可</span>
+    </div>
+    <div id="loginQr" style="display:none;margin-top:12px;text-align:center">
+      <img id="qrImg" style="width:190px;height:190px;border:1px solid var(--line);border-radius:8px">
+      <div class="muted" id="loginTip">二维码生成中…</div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>采集任务</h2>
     <div class="row">
       <input type="text" id="kw" placeholder="搜索关键词，如：iPhone 13 128g" value="">
@@ -100,6 +113,36 @@
 
 <script>
 let busy = false;
+
+let loginSid = null, loginTimer = null;
+
+async function startLogin() {
+  const r = await (await fetch('/api/login/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: 'default'}),
+  })).json();
+  loginSid = r.sid;
+  document.getElementById('loginQr').style.display = 'block';
+  document.getElementById('loginTip').textContent = '二维码生成中…';
+  document.getElementById('qrImg').removeAttribute('src');
+  loginTimer = setInterval(pollLogin, 2000);
+}
+
+async function pollLogin() {
+  if (!loginSid) return;
+  try {
+    const s = await (await fetch('/api/login/status?sid=' + loginSid)).json();
+    if (s.png) document.getElementById('qrImg').src = s.png;
+    const tips = {starting: '二维码生成中…', waiting: '请用手机闲鱼 App 扫码', scanned: '已扫描，请在手机上确认', confirming: '确认中，正在收取完整登录态…', success: '✅ 登录成功', error: '失败: ' + (s.error || '')};
+    document.getElementById('loginTip').textContent = tips[s.status] || s.status;
+    if (s.status === 'success') {
+      clearInterval(loginTimer); loginSid = null;
+      setTimeout(() => { document.getElementById('loginQr').style.display = 'none'; }, 1200);
+      loadStatus();
+    }
+    if (s.status === 'error') clearInterval(loginTimer);
+  } catch (_) {}
+}
 
 async function loadStatus() {
   const s = await (await fetch('/api/status')).json();
@@ -269,7 +312,7 @@ async function publishItem() {
     if (data.success) {
       el.innerHTML = `✅ 发布成功 <a href="${data.item_url}" target="_blank">${data.item_id}</a>`;
     } else {
-      el.textContent = '❌ 发布失败: ' + (data.message || '未知错误');
+      el.textContent = '❌ 发布失败: ' + (data.message || data.detail || ('HTTP ' + r.status));
       if (data.kind === 'risk') el.textContent += '（命中风控，等冷却或用解题流程）';
     }
   } catch (e) { el.textContent = '请求异常: ' + e; }
